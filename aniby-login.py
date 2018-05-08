@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 """Animebytes Login
+Simple script to login to animebytes to prevent getting your account pruned.
+Just done as a fun little side project.
 
 Usage:
     aniby-login.py (-f | --file) FILE
@@ -13,13 +15,13 @@ Options:
 """
 from docopt import docopt
 import sys
-from logging import error, info, warning
+from logging import error
 import requests
 from bs4 import BeautifulSoup
 import yaml
 
-VERSION = '0.0.1'
-ANIBY_URL = 'https://animebytes.tv'
+VERSION = '0.0.2'
+ANIBY_URL = 'https://animebytes.tv/'
 REQ_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.139 Safari/537.36'
 REQ_HOST = 'animebytes.tv'
 
@@ -56,11 +58,40 @@ def get_csrf_data(html):
     return {'token': token['value'], 'index': index['value']}
 
 
-def aniby_login(auth):
+def verify(post_data, username):
+    soup = BeautifulSoup(post_data.text, 'lxml')
+    login_status = post_data.status_code
+
+    if login_status == 200:
+        try:
+            profile = soup.find('a', {'class': 'username'}, text=True)
+            if not profile.text == username:
+                error('Logged in but username not found?! Dafuq.')
+                sys.exit(4)
+        except AttributeError:
+            error('Something went wrong trying to log in, debug data follows.')
+            print(post_data.text)
+            sys.exit(2)
+
+        return
+
+    try:
+        banned = soup.find('div', {'class': 'banned'})
+        if banned:
+            reason = banned.find('p').text
+            error('Login request denied because {reason}'.format(reason=reason))
+            sys.exit(3)
+    except AttributeError:
+        error('Login probably failed, debug data follows.')
+        print(post_data.text)
+        sys.exit(2)
+
+
+def login(auth):
     prv_url = ANIBY_URL
-    req_url = ANIBY_URL + '/user/login'
-    req_aniby_login_page = session.get(req_url, headers=HEADERS)
-    csrf_data = get_csrf_data(req_aniby_login_page.content)
+    req_url = ANIBY_URL + 'user/login'
+    req_login_page = session.get(req_url, headers=HEADERS)
+    csrf_data = get_csrf_data(req_login_page.content)
 
     req_headers = HEADERS
     req_headers['Referer'] = prv_url
@@ -70,16 +101,17 @@ def aniby_login(auth):
                   'login': 'Log+In!',
                   '_CSRF_INDEX': csrf_data['index'],
                   '_CSRF_TOKEN': csrf_data['token']}
-    req_cookies = {'__cfduid': req_aniby_login_page.cookies['__cfduid'],
-                   'transient': req_aniby_login_page.cookies['transient']}
+    # Don't really need these...
+    req_cookies = {'__cfduid': req_login_page.cookies['__cfduid'],
+                   'transient': req_login_page.cookies['transient']}
 
     post_login = session.post(req_url, data=req_params, headers=req_headers)
-    print(post_login.text)
-    print(post_login.status_code)
+
+    # Verify logged in
+    verify(post_login, auth['username'])
 
 
 if __name__ == '__main__':
     arguments = docopt(__doc__, version='Animebytes Login {version}'.format(help=True, version=VERSION))
     auth_info = get_auth_info(arguments['FILE'])
-
-    aniby_login(auth_info)
+    login(auth_info)
